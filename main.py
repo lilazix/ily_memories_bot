@@ -414,7 +414,7 @@ async def main():
     save_data(data)
     schedule_daily()
 
-    if os.getenv("RAILWAY_ENVIRONMENT"):  # Railway окружение
+    if os.getenv("PORT"):  # Railway окружение
         from aiohttp import web
 
         async def handle(request):
@@ -426,9 +426,12 @@ async def main():
         app.router.add_post(f"/{API_TOKEN}", handle)
 
         # устанавливаем webhook
-        webhook_url = f"{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/{API_TOKEN}"
-        await bot.set_webhook(webhook_url)
+        public_url = os.getenv("RAILWAY_STATIC_URL")
+        webhook_url = f"{public_url}/{API_TOKEN}"
 
+        await bot.delete_webhook(drop_pending_updates=True)
+        await bot.set_webhook(webhook_url)
+        
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
@@ -447,5 +450,6 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         print("Остановлен")
+
 
 
