@@ -409,15 +409,43 @@ def schedule_daily():
 # ====== ЗАПУСК ======
 async def main():
     print("Love Memories Bot запускается...")
-    # позаботимся о сохранении строк дат в data (если были изменены вручную)
     data.setdefault("start_date", START_DATE.isoformat())
     data.setdefault("meeting_date", MEETING_DATE.isoformat())
     save_data(data)
     schedule_daily()
-    await dp.start_polling(bot)
+
+    if os.getenv("RAILWAY_ENVIRONMENT"):  # Railway окружение
+        from aiohttp import web
+
+        async def handle(request):
+            update = await request.json()
+            await dp.feed_webhook_update(bot, update)
+            return web.Response()
+
+        app = web.Application()
+        app.router.add_post(f"/{API_TOKEN}", handle)
+
+        # устанавливаем webhook
+        webhook_url = f"{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/{API_TOKEN}"
+        await bot.set_webhook(webhook_url)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+        await site.start()
+
+        print(f"Webhook запущен на {webhook_url}")
+        while True:  # держим приложение живым
+            await asyncio.sleep(3600)
+    else:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         print("Остановлен")
+
+
