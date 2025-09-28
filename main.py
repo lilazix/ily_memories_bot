@@ -406,50 +406,40 @@ def schedule_daily():
     scheduler.add_job(lambda: asyncio.create_task(send_daily_and_special()), 'cron', hour=DAILY_SEND_HOUR, minute=0)
     scheduler.start()
 
-# ====== ЗАПУСК ======
+from aiohttp import web
+from aiogram.types import Update
+
+# обработчик вебхука
+async def handle_webhook(request):
+    data_req = await request.json()
+    update = Update(**data_req)
+    await dp.feed_update(bot, update)
+    return web.Response()
+
 async def main():
-    print("Love Memories Bot запускается...")
-    data.setdefault("start_date", START_DATE.isoformat())
-    data.setdefault("meeting_date", MEETING_DATE.isoformat())
-    save_data(data)
-    schedule_daily()
+    schedule_daily()  # включаем ежедневные уведомления
 
-    if os.getenv("PORT"):  # Railway окружение
-        from aiohttp import web
-
-        async def handle(request):
-            update = await request.json()
-            await dp.feed_webhook_update(bot, update)
-            return web.Response()
-
+    webhook_url = os.getenv("RAILWAY_STATIC_URL")
+    if webhook_url:
+        # --- Railway: запускаем webhook ---
         app = web.Application()
-        app.router.add_post(f"/{API_TOKEN}", handle)
-
-        # устанавливаем webhook
-        public_url = os.getenv("RAILWAY_STATIC_URL")
-        webhook_url = f"{public_url}/{API_TOKEN}"
+        app.router.add_post("/webhook", handle_webhook)
 
         await bot.delete_webhook(drop_pending_updates=True)
-        await bot.set_webhook(webhook_url)
-        
+        await bot.set_webhook(f"{webhook_url}/webhook")
+
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+        print(f"🚀 Bot запущен через webhook: {webhook_url}/webhook")
         await site.start()
 
-        print(f"Webhook запущен на {webhook_url}")
-        while True:  # держим приложение живым
+        while True:
             await asyncio.sleep(3600)
     else:
-        await bot.delete_webhook(drop_pending_updates=True)
+        # --- локально: polling ---
+        print("🤖 Bot запущен через polling")
         await dp.start_polling(bot)
 
-
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        print("Остановлен")
-
-
-
+    asyncio.run(main())
