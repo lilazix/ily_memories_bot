@@ -24,7 +24,10 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 # ====== НАСТРОЙКИ ======
-API_TOKEN = "7557684954:AAH7SrZmP5pzn6DsF2VvENtSrlpLboAAgBs"  # <- вставь сюда токен
+API_TOKEN = os.getenv("BOT_TOKEN")  # токен берём из переменной окружения Railway
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
+scheduler = AsyncIOScheduler()
 DATA_FILE = "data.json"
 DAILY_SEND_HOUR = 9  # час отправки ежедневного сообщения (0-23)
 
@@ -64,11 +67,6 @@ try:
     MEETING_DATE = datetime.fromisoformat(data.get("meeting_date", DEFAULTS["meeting_date"])).date()
 except Exception:
     MEETING_DATE = datetime.fromisoformat(DEFAULTS["meeting_date"]).date()
-
-# ====== БОТ И Диспетчер ======
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
-scheduler = AsyncIOScheduler()
 
 # ====== ВРЕМЕННОЕ СОСТОЯНИЕ (ожидание ввода) ======
 # pending_actions[chat_id] = {"action": "await_add_place" / "await_del_photo" / ...}
@@ -406,40 +404,25 @@ def schedule_daily():
     scheduler.add_job(lambda: asyncio.create_task(send_daily_and_special()), 'cron', hour=DAILY_SEND_HOUR, minute=0)
     scheduler.start()
 
-from aiohttp import web
-from aiogram.types import Update
+# === FASTAPI + WEBHOOK ===
+from fastapi import FastAPI, Request
+import uvicorn
 
-# обработчик вебхука
-async def handle_webhook(request):
-    data_req = await request.json()
-    update = Update(**data_req)
+app = FastAPI()
+
+@app.post("/webhook")
+async def webhook_handler(request: Request):
+    data = await request.json()
+    update = types.Update(**data)
     await dp.feed_update(bot, update)
-    return web.Response()
+    return {"ok": True}
 
-async def main():
-    schedule_daily()  # включаем ежедневные уведомления
-
-    webhook_url = os.getenv("RAILWAY_STATIC_URL")
-    if webhook_url:
-        # --- Railway: запускаем webhook ---
-        app = web.Application()
-        app.router.add_post("/webhook", handle_webhook)
-
-        await bot.delete_webhook(drop_pending_updates=True)
-        await bot.set_webhook(f"{webhook_url}/webhook")
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
-        print(f"🚀 Bot запущен через webhook: {webhook_url}/webhook")
-        await site.start()
-
-        while True:
-            await asyncio.sleep(3600)
-    else:
-        # --- локально: polling ---
-        print("🤖 Bot запущен через polling")
-        await dp.start_polling(bot)
+@app.on_event("startup")
+async def on_startup():
+    webhook_url = f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}/webhook"
+    await bot.set_webhook(webhook_url)
+    schedule_daily()
+    print(f"🚀 Bot запущен через webhook: {webhook_url}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
